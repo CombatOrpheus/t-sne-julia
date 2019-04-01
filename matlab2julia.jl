@@ -8,7 +8,7 @@ function Hbeta!(P::AbstractVector{T}, D::AbstractVector{T},
      beta=1.0) where T<:Number
     @inbounds P .= exp.(-D .* beta)
     sumP = sum(P)
-    H = log(sumP) + beta * sum(D .* P) / sumP
+    H = log(sumP) + beta * dot(D, P) / sumP
     @inbounds P ./= sumP
     return H
 end
@@ -36,6 +36,7 @@ function d2p(D::AbstractMatrix{T}, perplexity=15, tol=14e-4) where T<:Number
     beta = fill(one(T), n)  #   Empty precision vector
     logU = log(perplexity)  #   Log of perplexity
     Pcol = fill(zero(T), n)
+    Di = fill(zero(T), n)
 
     # Run over all datapoints
     for i in 1:n
@@ -49,8 +50,10 @@ function d2p(D::AbstractMatrix{T}, perplexity=15, tol=14e-4) where T<:Number
         betai = 1.0
 
         # Compute the Gaussian kernel and entropy for the current precision
-        Di = view(D, :, i)
-        Di[i] = prevfloat(Inf)
+        copyto!(Di, view(D, :, i))
+        Di[i] = prevfloat(Inf) # exclude D[i,i] from minimum(), yet make it finite and exp(-D[i,i])==0.0
+        minD = minimum(Di) # distance of i-th point to its closest neighbour
+        @inbounds Di .-= minD # entropy is invariant to offsetting Di, which helps to avoid overflow
         H = Hbeta!(Pcol, Di, betai)
 
         # Evaluate whether the perplexity is within tolerance
@@ -89,7 +92,7 @@ function tsne_X(X::AbstractMatrix{T}, no_dims::Integer=2,
     X .-= mean(X, dims=1)
 
     # Preprocess using PCA
-    pca(X, initial_dims)
+    X = pca(X, initial_dims)
 
     # Compute pairwise distance matrix
     sum_X = sum(X .^ 2, dims=2)
@@ -117,12 +120,11 @@ function tsne(P::AbstractMatrix{T}, no_dims::Integer) where T<:Number
 
     # Make sure P-vals are set properly
     diagzero!(P)                                       # Set diagonal to zero
-    P .+= P'
-    P .*= 0.5                                          # Symmetrize P-values
-    @inbounds P[(P./sum(P)) .< realmin] .= realmin     # Make sure P-values sum to one
+    P .= 0.5 .* (P .+ P')                              # Symmetrize P-values
+    P .= max.(P ./ sum(P), realmin)                    # Make sure P-values sum to one
     #TODO: Find a way to calculate the KL Divergence error
-    kl_const = sum(P .* log.(P))                       # Constant in KL divergence
-    P .*= 4.0                                          # Lie about the P-vals to find better local minima
+    # kl_const = sum(P .* log.(P))                       # Constant in KL divergence
+    P .= 4.0 .* P                                        # Lie about the P-vals to find better local minima
 
     # Pre-allocating matrixes
     Y = .0001 .* randn(n, no_dims)
@@ -132,7 +134,6 @@ function tsne(P::AbstractMatrix{T}, no_dims::Integer) where T<:Number
     sum_Y = fill(one(T), n, 1)
     sum_L = fill(one(T), 1, n)
     num = fill(one(T), n, n)
-    sum_num = similar(num)
     Y_mean = fill(one(T), 1, no_dims)
     Y_mul = fill(zero(T), n, n)
     Q = fill(zero(T), n, n)
@@ -142,32 +143,29 @@ function tsne(P::AbstractMatrix{T}, no_dims::Integer) where T<:Number
         # Compute joint probability that point i and j are neighbors
         sum!(sum_Y, Y .^ 2)
         @inbounds num .= 1 ./(1.0 .+ (sum_Y .+ (sum_Y' .+ (-2.0 .* (Y * Y')))))
-        diagzero!(num)                                  # Set diagonal to zero
-        @inbounds Q .= num./sum(num)
-        @inbounds Q[Q .< realmin] .= realmin            # Normalize to get probabilities
+        diagzero!(num)                                     # Set diagonal to zero
+        Q = max.(num./sum(num), realmin)                  # Normalize to get probabilities
 
         # Compute the gradients
-        for i in eachindex(L)
-            @inbounds L[i] = (P[i] - Q[i]) * num[i]
-        end
-        # sum!(sum_L, L)
-        @inbounds dY .= 4.0 .* (Diagonal(sum_L) .- L) * Y
+        @inbounds L .= (P .- Q) .* num
+        sum!(sum_L, L)
+        @inbounds dY .= -4.0 .* (Diagonal(sum_L) .- L) * Y
         # BLAS.symm!('L', 'U', -4.0, L, Y, 0.0, dY)
 
         # Update the solution
-        @inbounds gains .= (gains .+ .2) .* (sign.(dY) .!= sign.(iY)) .+         # note that the y_grads are actually -y_grads
+        gains .= (gains .+ .2) .* (sign.(dY) .!= sign.(iY)) .+         # note that the y_grads are actually -y_grads
                  (gains .* .8) .* (sign.(dY) .== sign.(iY))
-        @inbounds gains[gains .< min_gain] .= min_gain
-        @inbounds @. iY = momentum * iY - epsilon * (gains * dY)
-        @inbounds Y .+= iY
-        @inbounds Y .-= mean!(Y_mean, Y)
+        gains .= max.(gains, min_gain)
+        iY .= momentum * iY - epsilon * (gains .* dY)
+        Y .= Y .+ iY
+        Y .= Y .- mean(Y, dims=1)
 
         # Update the momentum if necessary
         if i == mom_switch_iter
             momentum = final_momentum
         end
         if i == stop_lying_iter
-            P ./= 4.0
+            P .= 4.0 .* P
         end
         if i % 100 == 0
             # cost = kl_const - sum(P .* log.(Q))
