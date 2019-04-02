@@ -90,6 +90,7 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims=50,
     Y = randn(n, no_dims)
     dY = fill(zero(T), n, no_dims)
     iY = fill(zero(T), n, no_dims)
+    sum_Y = fill(zero(T), n)
     gains = fill(one(T), n, no_dims)
 
     # Compute P-values
@@ -101,24 +102,31 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims=50,
     PQ = similar(P)
     Y_mean = fill(zero(T), 1, no_dims)
 
+    # Pre-allocating some matrixes
+    num = fill(one(T), n, n)
+    Q = fill!(similar(num), one(T))
+
     # Run iterations
     for iter in 1:max_iter
 
         # Compute pairwise affinities
-        sum_Y = sum(Y .^ 2, dims=2)
-        num = -2.0 .* (Y * Y')
-        num .= 1 ./(1.0 .+ (sum_Y .+ (sum_Y .+ num)'))
+        sum!(sum_Y, Y .^ 2)
+        num .= -2.0 .* (Y * Y')
+        num .= 1.0 ./(1.0 .+ (sum_Y .+ (sum_Y .+ num)'))
         # num[1:n, 1:n] .= 0.0
         for i in 1:n
             @inbounds num[i,i] = 0
         end
-        Q = num / sum(num)
+        Q .= num ./ sum(num)
         Q .= max.(Q, 1e-12)
 
         # Compute gradient
-        @. PQ = P - Q
+        PQ .= P .- Q
         for i in 1:n
-            sum!(view(dY, i, :), repeat(PQ[:, i] .* num[:, i], 1, no_dims)' * (Y[i, :]' .- Y))
+            PQi = view(PQ, :, i)
+            numi = view(num, :, i)
+            dYi = view(dY, i, :)
+            sum!(dYi', repeat((PQi .* numi), 1, no_dims) .* (Y[i, :]' .- Y))
             # dY[i, :] .= sum(repeat(PQ[:, i] .* num[:, i], 1, no_dims)' * (Y[i, :]' .- Y), dims=1)
             # dY[i, :] = np.sum(np.tile(PQ[:, i] * num[:, i], (no_dims, 1)).T * (Y[i, :] - Y), 0)
         end
