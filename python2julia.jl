@@ -4,12 +4,12 @@ using LinearAlgebra
 using Statistics: mean, mean!
 using Printf: @printf
 
-function Hbeta(D::AbstractVector{T}, beta=1.0) where T<: Number
-    P = exp.(-D * beta)
+function Hbeta!(P::AbstractVector{T}, D::AbstractVector{T}, beta=1.0) where T<: Number
+    @inbounds P .= exp.(-D * beta)
     sumP = sum(P)
     H = log(sumP) + beta * dot(D, P) / sumP
-    P ./= sumP
-    return H, P
+    @inbounds P ./= sumP
+    return H
 end
 
 function x2p(X::AbstractMatrix{T}, tol=1e-5, perplexity=30.0) where T<: Number
@@ -21,6 +21,7 @@ function x2p(X::AbstractMatrix{T}, tol=1e-5, perplexity=30.0) where T<: Number
     beta = fill(one(T), n)
     logU = log(perplexity)
     Di = fill(zero(T), n)
+    thisP = similar(Di)
 
     # Loop over all datapointa
     for i in 1:n
@@ -34,11 +35,12 @@ function x2p(X::AbstractMatrix{T}, tol=1e-5, perplexity=30.0) where T<: Number
         betamax = Inf
         betai = 1.0
 
+        copyto!(thisP, view(P, i, :))
         copyto!(Di, view(D, :, i))
         Di[i] = prevfloat(Inf) # exclude D[i,i] from minimum(), yet make it finite and exp(-D[i,i])==0.0
         minD = minimum(Di) # distance of i-th point to its closest neighbour
         @inbounds Di .-= minD # entropy is invariant to offsetting Di, which helps to avoid overflow
-        H, thisP = Hbeta(Di, betai)
+        H = Hbeta!(thisP, Di, betai)
 
         Hdiff = H - logU
         tries = 0
@@ -54,7 +56,7 @@ function x2p(X::AbstractMatrix{T}, tol=1e-5, perplexity=30.0) where T<: Number
             end
 
             # Recompute the values
-            H, thisP = Hbeta(Di, betai)
+            H = Hbeta!(thisP, Di, betai)
             Hdiff = H - logU
             tries += 1
         end
@@ -104,29 +106,44 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims=50,
 
     # Pre-allocating some matrixes
     num = fill(one(T), n, n)
+    inter_num = similar(num)
     Q = fill!(similar(num), one(T))
+    gradient1 = fill(one(T), n, no_dims)
+    gradient2 = fill(one(T), n, no_dims)
+    inter_gradient = fill(one(T), n)
+    C = [0.0]
 
     # Run iterations
     for iter in 1:max_iter
 
         # Compute pairwise affinities
         sum!(sum_Y, Y .^ 2)
-        num .= -2.0 .* (Y * Y')
-        num .= 1.0 ./(1.0 .+ (sum_Y .+ (sum_Y .+ num)'))
-        # num[1:n, 1:n] .= 0.0
-        for i in 1:n
-            @inbounds num[i,i] = 0
+        # inter_num = Y*Y'
+        # mul!(inter_num, Y, Y')
+        # lmul!(-2.0, inter_num)
+        BLAS.gemm!('N', 'T', -2.0, Y, Y, 0.0, inter_num)
+        inter_num .+= sum_Y
+        transpose!(num, inter_num)
+        num .+= sum_Y
+        @inbounds num .= 1.0 ./(1.0 .+ num)
+        @inbounds for i in 1:n
+            num[i,i] = 0
         end
         Q .= num ./ sum(num)
         Q .= max.(Q, 1e-12)
 
         # Compute gradient
-        PQ .= P .- Q
-        for i in 1:n
+        @inbounds PQ .= P .- Q
+        @inbounds for i in 1:n
             PQi = view(PQ, :, i)
             numi = view(num, :, i)
             dYi = view(dY, i, :)
-            sum!(dYi', repeat((PQi .* numi), 1, no_dims) .* (Y[i, :]' .- Y))
+            Yi = view(Y, i, :)
+            inter_gradient = PQi .* numi
+            gradient1 .= repeat(inter_gradient, 1, no_dims)
+            gradient2 .= Yi' .- Y
+            gradient2 .= gradient1 .* gradient2
+            sum!(dYi', gradient2)
             # dY[i, :] .= sum(repeat(PQ[:, i] .* num[:, i], 1, no_dims)' * (Y[i, :]' .- Y), dims=1)
             # dY[i, :] = np.sum(np.tile(PQ[:, i] * num[:, i], (no_dims, 1)).T * (Y[i, :] - Y), 0)
         end
@@ -137,12 +154,13 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims=50,
         gains .= max.(gains, min_gain)
         @. iY = momentum * iY - eta * (gains * dY)
         Y .+= iY
-        Y .-= mean!(Y_mean, Y)
+        @inbounds Y .-= mean!(Y_mean, Y)
 
         # Compute current value of cost function
         if (iter + 1) % 10 == 0
-            C = sum(P .* log.(P ./ Q))
-            @printf("Iteration %d: error is %f\n", iter + 1, C)
+            # C = sum(P .* log.(P ./ Q))
+            sum!(C, P .* log.(P ./ Q))
+            @printf("Iteration %d: error is %f\n", iter + 1, C[1])
         end
 
         # Stop lying about P-values
