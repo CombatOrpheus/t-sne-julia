@@ -112,6 +112,7 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims=50,
     gradient2 = fill(one(T), n, no_dims)
     inter_gradient = fill(one(T), n)
     C = [0.0]
+    Q_part = [0.0]
 
     # Run iterations
     for iter in 1:max_iter
@@ -129,7 +130,7 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims=50,
         @inbounds for i in 1:n
             num[i,i] = 0
         end
-        Q .= num ./ sum(num)
+        Q .= num ./ sum!(Q_part, num)
         Q .= max.(Q, 1e-12)
 
         # Compute gradient
@@ -139,8 +140,9 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims=50,
             numi = view(num, :, i)
             dYi = view(dY, i, :)
             Yi = view(Y, i, :)
-            inter_gradient = PQi .* numi
-            gradient1 .= repeat(inter_gradient, 1, no_dims)
+            inter_gradient .= PQi .* numi
+            #FIXME: repeat is creating a hotspot
+            @inbounds gradient1 .= repeat(inter_gradient, 1, no_dims)
             gradient2 .= Yi' .- Y
             gradient2 .= gradient1 .* gradient2
             sum!(dYi', gradient2)
