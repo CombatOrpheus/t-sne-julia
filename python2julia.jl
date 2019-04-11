@@ -4,8 +4,10 @@ using LinearAlgebra
 using Statistics: mean, mean!
 using Printf: @printf
 
+export tsne
+
 function Hbeta!(P::AbstractVector{T}, D::AbstractVector{T}, beta=1.0) where T<: Number
-    @inbounds P .= exp.(-D * beta)
+    @inbounds P .= exp.(-D .* beta)
     sumP = sum(P)
     H = log(sumP) + beta * dot(D, P) / sumP
     @inbounds P ./= sumP
@@ -112,6 +114,7 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims=50,
     gradient2 = fill(one(T), n, no_dims)
     inter_gradient = fill(one(T), n)
     C = [0.0]
+    error = fill!(similar(P), one(T))
     Q_part = [0.0]
 
     # Run iterations
@@ -142,7 +145,10 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims=50,
             Yi = view(Y, i, :)
             inter_gradient .= PQi .* numi
             #FIXME: repeat is creating a hotspot
-            @inbounds gradient1 .= repeat(inter_gradient, 1, no_dims)
+            # gradient1 .= repeat(inter_gradient, 1, no_dims)
+            for i in eachcol(gradient1)
+                i .= inter_gradient
+            end
             gradient2 .= Yi' .- Y
             gradient2 .= gradient1 .* gradient2
             sum!(dYi', gradient2)
@@ -161,7 +167,8 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims=50,
         # Compute current value of cost function
         if (iter + 1) % 10 == 0
             # C = sum(P .* log.(P ./ Q))
-            sum!(C, P .* log.(P ./ Q))
+            @. error = P * log(P / Q)
+            sum!(C, error)
             @printf("Iteration %d: error is %f\n", iter + 1, C[1])
         end
 
