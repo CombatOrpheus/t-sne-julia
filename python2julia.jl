@@ -81,6 +81,14 @@ end
     return Y * reverse(Ceig.vectors, dims=2)
 end
 
+function inplace_max!(A::AbstractMatrix, comp::Number)
+    for i in eachindex(A)
+        @inbounds A[i] = ifelse(A[i] > comp,
+                                A[i],
+                                comp)
+    end
+end
+
 function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims=50,
      perplexity=30.0) where T<:Number
 
@@ -102,7 +110,7 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims=50,
     P .+= P'
     P ./= sum(P)
     P .*= 4.									# early exaggeration
-    P .= max.(P, 1e-12)
+    inplace_max!(P, 1e-12)
     PQ = similar(P)
     Y_mean = fill(zero(T), 1, no_dims)
 
@@ -124,30 +132,26 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims=50,
         sum!(sum_Y, Y .^ 2.0)
         # inter_num = -2 * (Y * Y')
         BLAS.gemm!('N', 'T', -2.0, Y, Y, 0.0, inter_num)
-        inter_num .+= sum_Y
-        transpose!(num, inter_num)
-        num .+= sum_Y
-        @inbounds num .= 1.0 ./(1.0 .+ num)
-        @inbounds for i in 1:n
+        transpose!(num, inter_num .+= sum_Y)
+        @inbounds @. num = 1.0 /(1.0 + (num + sum_Y))
+        for i in 1:n
             num[i,i] = 0.0
         end
-        Q .= num ./ sum!(Q_part, num)
-        Q .= max.(Q, 1e-12)
+        # Q .= num ./ sum!(Q_part, num)
+        @inbounds inplace_max!(Q .= num ./ sum!(Q_part, num), 1e-12)
 
         # Compute gradient
         @inbounds PQ .= P .- Q
-        @inbounds for i in 1:n
+        for i in 1:n
             PQi = view(PQ, :, i)
             numi = view(num, :, i)
             dYi = view(dY, i, :)'
             Yi = view(Y, i, :)'
             inter_gradient .= PQi .* numi
-            # gradient1 .= repeat(inter_gradient, 1, no_dims)
-            for i in 1:no_dims
-                gradient1[:, i] .= inter_gradient
+            for i in eachcol(gradient1)
+                @inbounds i .= inter_gradient
             end
-            gradient2 .= Yi .- Y
-            gradient2 .= gradient1 .* gradient2
+            @inbounds gradient2 .= gradient1 .* (Yi .- Y)
             sum!(dYi, gradient2)
             # dY[i, :] .= sum(repeat(PQ[:, i] .* num[:, i], 1, no_dims)' * (Y[i, :]' .- Y), dims=1)
         end
@@ -155,15 +159,14 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims=50,
         momentum = ifelse(iter < 20, initial_momentum, final_momentum)
         @. gains = (gains + 0.2) * ((dY > 0.) != (iY > 0.)) +
                 (gains * 0.8) * ((dY > 0.) == (iY > 0.))
-        @. gains = max(gains, min_gain)
-        @. iY = momentum * iY - eta * (gains * dY)
-        Y .+= iY
-        @inbounds Y .-= mean!(Y_mean, Y)
+        inplace_max!(gains, min_gain)
+        @inbounds @. iY = momentum * iY - eta * (gains * dY)
+        @inbounds Y .-= mean!(Y_mean, Y .+= iY)
 
         # Compute current value of cost function
-        if (iter + 1) % 10 == 0
+        if (iter + 1) % 100 == 0
             # C = sum(P .* log.(P ./ Q))
-            @. error = P * log(P / Q)
+            @inbounds @. error = P * log(P / Q)
             sum!(C, error)
             @printf("Iteration %d: error is %f\n", iter + 1, C[1])
         end
