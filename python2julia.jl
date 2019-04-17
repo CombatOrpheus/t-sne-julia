@@ -6,7 +6,7 @@ using Printf: @printf
 
 export tsne
 
-function Hbeta!(P::AbstractVector{T}, D::AbstractVector{T}, beta=1.0) where T<: Number
+@inline function Hbeta!(P::AbstractVector{T}, D::AbstractVector{T}, beta=1.0) where T<: Number
     @inbounds P .= exp.(-D .* beta)
     sumP = sum(P)
     H = log(sumP) + beta * dot(D, P) / sumP
@@ -72,7 +72,7 @@ function x2p(X::AbstractMatrix{T}, tol=1e-5, perplexity=30.0) where T<: Number
     return P
 end
 
-function pca(X::AbstractMatrix, ndims::Integer = 50)
+@inline function pca(X::AbstractMatrix, ndims::Integer = 50)
     (n, d) = size(X)
     (d <= ndims) && return X
     Y = X .- mean(X, dims=1)
