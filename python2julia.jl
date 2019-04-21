@@ -157,10 +157,14 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims=50,
         end
         # Perform the update
         momentum = ifelse(iter < 20, initial_momentum, final_momentum)
-        @. gains = (gains + 0.2) * ((dY > 0.) != (iY > 0.)) +
-                (gains * 0.8) * ((dY > 0.) == (iY > 0.))
-        inplace_max!(gains, min_gain)
-        @inbounds @. iY = momentum * iY - eta * (gains * dY)
+        for i in eachindex(gains)
+            gains[i] = max(ifelse(((dY[i] > 0.) == (iY[i] > 0.)),
+                                gains[i] * 0.8,
+                                gains[i] + 0.2),
+                                min_gain)
+            iY[i] = momentum * iY[i] - eta * (gains[i] * dY[i])
+            Y[i] += iY[i]
+        end
         @inbounds Y .-= mean!(Y_mean, Y .+= iY)
 
         # Compute current value of cost function
