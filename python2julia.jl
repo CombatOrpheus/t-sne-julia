@@ -5,8 +5,13 @@ using Statistics: mean, mean!
 using Printf: @printf
 
 export tsne
+"""
+    Hbeta!(P::AbstractVector, D::AbstractVector, beta::Number)
 
-@inline function Hbeta!(P::AbstractVector{T}, D::AbstractVector{T}, beta=1.0) where T<: Number
+Compute the point perplexities `P` given its squared distances to the other points `D`
+ans the precsion of Gaussian distribution `beta`.
+"""
+@inline function Hbeta!(P::AbstractVector, D::AbstractVector, beta::Number)
     @inbounds P .= exp.(-D .* beta)
     sumP = sum(P)
     H = log(sumP) + beta * dot(D, P) / sumP
@@ -14,7 +19,15 @@ export tsne
     return H
 end
 
-function x2p(X::AbstractMatrix{T}, tol=1e-5, perplexity=30.0) where T<: Number
+"""
+    x2p(D::AbstractMatrix{T}, tol::Number = 1e-5, perplexity::Number = 30.0)
+
+Convert `n×n` squared distances matrix `D` into `n×n` perplexities matrix `P`.
+Performs a binary seach to get P-values in such a way that each conditional
+Gaussian has the same perplexity.
+"""
+function x2p(X::AbstractMatrix{T}, tol::Number =1e-5,
+     perplexity::Number =30.0) where T<: Number
     # Initializing some variables
     n, d = size(X)
     sum_X = sum(X .^ 2, dims=2)
@@ -72,6 +85,11 @@ function x2p(X::AbstractMatrix{T}, tol=1e-5, perplexity=30.0) where T<: Number
     return P
 end
 
+"""
+    pca(X::AbstractMatrix, ndims::Integer = 50)
+
+Run PCA on `X` to reduce the number of its dimensions to `ndims`.
+"""
 @inline function pca(X::AbstractMatrix, ndims::Integer = 50)
     (n, d) = size(X)
     (d <= ndims) && return X
@@ -81,6 +99,8 @@ end
     return Y * reverse(Ceig.vectors, dims=2)
 end
 
+#TODO: Consider removing this functions since its very simple and could be
+#manualy written whre needed.
 function inplace_max!(A::AbstractMatrix, comp::Number)
     for i in eachindex(A)
         @inbounds A[i] = ifelse(A[i] > comp,
@@ -89,6 +109,19 @@ function inplace_max!(A::AbstractMatrix, comp::Number)
     end
 end
 
+"""
+    tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims=50,
+     perplexity=30.0) where T<:Number
+
+Apply t-SNE (t-Distributed Stochastic Neighbor Embedding) to `X`,
+i.e. embed its points into `ndims` dimensions preserving cllose neighbours.
+
+Returns the `point×ndims` matrix of calculated embedded coordinates.
+
+Different from original implementation: the default is not to use PCA for initialization.
+"""
+#TODO: Add the tsne variables to the function signature and make them be
+#keyword arguments.
 function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims=50,
      perplexity=30.0) where T<:Number
 
