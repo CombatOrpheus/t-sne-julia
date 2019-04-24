@@ -133,16 +133,15 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims=50,
     eta = 500
     min_gain = 0.01
     Y = randn(n, no_dims)
-    dY = fill(zero(T), n, no_dims)
-    iY = fill(zero(T), n, no_dims)
+    dY = fill(zero(T), n, no_dims)              # gradient vector
+    iY = fill(zero(T), n, no_dims)              # momentum vector
+    gains = fill(one(T), n, no_dims)            # how much momentum is affected bt gradient
     sum_Y = fill(zero(T), n)
-    gains = fill(one(T), n, no_dims)
 
     # Compute P-values
     P = x2p(X, 1e-5, perplexity)
     P .+= P'
-    P ./= sum(P)
-    P .*= 4.									# early exaggeration
+    P .*= 4.0/sum(P)								# early exaggeration + normalization
     inplace_max!(P, 1e-12)
     PQ = similar(P)
     Y_mean = fill(zero(T), 1, no_dims)
@@ -150,10 +149,8 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims=50,
     # Pre-allocating some matrixes
     num = fill(one(T), n, n)
     inter_num = similar(num)
-    Q = fill!(similar(num), one(T))
-    gradient1 = fill(one(T), n, no_dims)
-    gradient2 = fill(one(T), n, no_dims)
-    inter_gradient = fill(one(T), n)
+    Q = fill!(similar(num), zero(T))
+    gradient = fill(one(T), n, no_dims)
     C = [0.0]
     error = fill!(similar(P), one(T))
     Q_part = [0.0]
@@ -180,13 +177,8 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims=50,
             numi = view(num, :, i)
             dYi = view(dY, i, :)'
             Yi = view(Y, i, :)'
-            inter_gradient .= PQi .* numi
-            for i in eachcol(gradient1)
-                @inbounds i .= inter_gradient
-            end
-            @inbounds gradient2 .= gradient1 .* (Yi .- Y)
-            sum!(dYi, gradient2)
-            # dY[i, :] .= sum(repeat(PQ[:, i] .* num[:, i], 1, no_dims)' * (Y[i, :]' .- Y), dims=1)
+            # @. gradient = PQi * numi * (Yi - Y)
+            sum!(dYi, gradient .= PQi .* numi .* (Yi .- Y))
         end
         # Perform the update
         momentum = ifelse(iter < 20, initial_momentum, final_momentum)
