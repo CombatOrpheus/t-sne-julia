@@ -122,16 +122,13 @@ Different from original implementation: the default is not to use PCA for initia
 """
 #TODO: Add the tsne variables to the function signature and make them be
 #keyword arguments.
-function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims=50,
-     perplexity=30.0) where T<:Number
+function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims::Integer = 50,
+     perplexity::Number = 30.0; max_iter::Integer = 1000,
+     initial_momentum::Number = 0.5, final_momentum = 0.8, eta::Integer = 500,
+     min_gain::Number = 0.01, cheat_scale::Number = 4.0) where T<:Number
 
     X = pca(X, initial_dims)
     n, d = size(X)
-    max_iter = 1000
-    initial_momentum = 0.5
-    final_momentum = 0.8
-    eta = 500
-    min_gain = 0.01
     Y = randn(n, no_dims)
     dY = fill(zero(T), n, no_dims)              # gradient vector
     iY = fill(zero(T), n, no_dims)              # momentum vector
@@ -159,26 +156,25 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims=50,
     for iter in 1:max_iter
 
         # Compute pairwise affinities
-        sum!(sum_Y, Y .^ 2.0)
-        # inter_num = -2 * (Y * Y')
+        sum!(x -> x^2.0, sum_Y, Y)
+        # inter_num = -2YY'
         BLAS.gemm!('N', 'T', -2.0, Y, Y, 0.0, inter_num)
         transpose!(num, inter_num .+= sum_Y)
         @inbounds @. num = 1.0 /(1.0 + (num + sum_Y))
         for i in 1:n
             num[i,i] = 0.0
         end
-        # Q .= num ./ sum!(Q_part, num)
-        @inbounds inplace_max!(Q .= num ./ sum!(Q_part, num), 1e-12)
+        Q .= num ./ sum!(Q_part, num)
+        @inbounds inplace_max!(Q, 1e-12)
 
         # Compute gradient
-        @inbounds PQ .= P .- Q
+        @inbounds L .= (P .- Q) .* num
         for i in 1:n
-            PQi = view(PQ, :, i)
-            numi = view(num, :, i)
+            Li = view(L, :, i)
             dYi = view(dY, i, :)'
             Yi = view(Y, i, :)'
-            # @. gradient = PQi * numi * (Yi - Y)
-            sum!(dYi, gradient .= PQi .* numi .* (Yi .- Y))
+            gradient .= Li .* (Yi .- Y)
+            sum!(dYi, gradient)
         end
         # Perform the update
         momentum = ifelse(iter < 20, initial_momentum, final_momentum)
