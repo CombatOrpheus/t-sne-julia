@@ -134,6 +134,7 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims::Integer = 50,
     iY = fill(zero(T), n, no_dims)              # momentum vector
     gains = fill(one(T), n, no_dims)            # how much momentum is affected bt gradient
     sum_Y = fill(zero(T), n)
+    sum_YY = fill(one(T), n , n)
 
     # Compute P-values
     P = x2p(X, 1e-5, perplexity)
@@ -156,19 +157,19 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims::Integer = 50,
     for iter in 1:max_iter
 
         # Compute pairwise affinities
-        sum!(x -> x^2.0, sum_Y, Y)
+        sum!(x -> x^2, sum_Y, Y)
         # inter_num = -2YY'
         BLAS.gemm!('N', 'T', -2.0, Y, Y, 0.0, inter_num)
         transpose!(num, inter_num .+= sum_Y)
-        @inbounds @. num = 1.0 /(1.0 + (num + sum_Y))
+        @. num = 1.0 /(1.0 + (num + sum_Y))
         for i in 1:n
             num[i,i] = 0.0
         end
         Q .= num ./ sum!(Q_part, num)
-        @inbounds inplace_max!(Q, 1e-12)
+        inplace_max!(Q, 1e-12)
 
         # Compute gradient
-        @inbounds L .= (P .- Q) .* num
+        L .= (P .- Q) .* num
         for i in 1:n
             Li = view(L, :, i)
             dYi = view(dY, i, :)'
