@@ -27,7 +27,7 @@ Performs a binary seach to get P-values in such a way that each conditional
 Gaussian has the same perplexity.
 """
 function x2p(X::AbstractMatrix{T}, tol::Number =1e-5,
-     perplexity::Number =30.0) where T<: Number
+     perplexity::Number =30.0; max_iter::Integer = 50) where T<: Number
     # Initializing some variables
     n, d = size(X)
     sum_X = sum(X .^ 2, dims=2)
@@ -60,7 +60,7 @@ function x2p(X::AbstractMatrix{T}, tol::Number =1e-5,
         Hdiff = H - logU
         tries = 0
 
-        while abs(Hdiff) > tol && tries < 50
+        while abs(Hdiff) > tol && tries < max_iter
             # If not, increase or decrease precision
             if Hdiff > 0.0
                 betamin = betai
@@ -99,16 +99,6 @@ Run PCA on `X` to reduce the number of its dimensions to `ndims`.
     return Y * reverse(Ceig.vectors, dims=2)
 end
 
-#TODO: Consider removing this functions since its very simple and could be
-#manualy written whre needed.
-function inplace_max!(A::AbstractVecOrMat, comp::Number)
-    @simd for i in eachindex(A)
-        @inbounds A[i] = ifelse(A[i] > comp,
-                                A[i],
-                                comp)
-    end
-end
-
 """
     tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims=50,
      perplexity=30.0) where T<:Number
@@ -132,15 +122,14 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims::Integer = 50,
     Y = randn(n, no_dims)
     dY = fill(zero(T), n, no_dims)              # gradient vector
     iY = fill(zero(T), n, no_dims)              # momentum vector
-    gains = fill(one(T), n, no_dims)            # how much momentum is affected bt gradient
+    gains = fill(one(T), n, no_dims)            # how much momentum is affected by gradient
     sum_Y = fill(zero(T), n)
-    sum_YY = fill(one(T), n , n)
 
     # Compute P-values
     P = x2p(X, 1e-5, perplexity)
     P .+= P'
     P .*= cheat_scale/sum(P)					# early exaggeration + normalization
-    inplace_max!(P, 1e-12)
+    P .= max.(P, 1e-12)
     L = similar(P)
     Y_mean = fill(zero(T), 1, no_dims)
 
@@ -149,32 +138,34 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims::Integer = 50,
     inter_num = similar(num)
     Q = fill!(similar(num), zero(T))
     gradient = fill(one(T), n, no_dims)
-    C = [0.0]
-    error = fill!(similar(P), one(T))
-    Q_part = [0.0]
+	error = fill!(similar(P), one(T))
 
     # Run iterations
     for iter in 1:max_iter
 
         # Compute pairwise affinities
         sum!(x -> x^2, sum_Y, Y)
-        # inter_num = -2YY'
-        BLAS.gemm!('N', 'T', -2.0, Y, Y, 0.0, inter_num)
-        transpose!(num, inter_num .+= sum_Y)
-        @. num = 1.0 /(1.0 + (num + sum_Y))
-        for i in 1:n
+		BLAS.gemm!('N', 'T', -2.0, Y, Y, 0.0, inter_num)
+		@. @fastmath num = 1.0 /(1.0 + sum_Y + sum_Y' + inter_num)
+        @inbounds for i in 1:n
             num[i,i] = 0.0
         end
-        Q .= num ./ sum!(Q_part, num)
-        inplace_max!(Q, 1e-12)
+
+        inv_sum_Q = 1/sum(num)
+		@inbounds for i in eachindex(Q)
+			Q[i] = Qi = max(num[i]*inv_sum_Q, 1e-12)
+			L[i] = (P[i] - Qi) * num[i]
+		end
 
         # Compute gradient
-        L .= (P .- Q) .* num
-        for i in 1:n
-            Li = view(L, :, i)
-            dYi = view(dY, i, :)'
-            Yi = view(Y, i, :)'
-            gradient .= Li .* (Yi .- Y)
+        # @. L = (P - Q) * num
+        # TODO: Try to use this version to calculate the gradient
+        # dY .= 4 .* (Diagonal(vec(sum(L, dims=1))) .- L) * Y
+        @views for i in 1:n
+            Li = L[:, i]
+            dYi = dY[i, :]'
+            Yi = Y[i, :]'
+            @. gradient = Li * (Yi - Y)
             sum!(dYi, gradient)
         end
         # Perform the update
@@ -190,11 +181,10 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims::Integer = 50,
         @inbounds Y .-= mean!(Y_mean, Y)
 
         # Compute current value of cost function
-        if (iter + 1) % 100 == 0
+        if iter % 100 == 0
             # C = sum(P .* log.(P ./ Q))
             @inbounds @. error = P * log(P / Q)
-            sum!(C, error)
-            @printf("Iteration %d: error is %f\n", iter + 1, C[1])
+            @printf("Iteration %d: error is %f\n", iter, sum(error))
         end
 
         # Stop lying about P-values
