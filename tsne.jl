@@ -5,6 +5,7 @@ using Statistics: mean, mean!
 using Printf: @printf
 
 export tsne
+
 """
     Hbeta!(P::AbstractVector, D::AbstractVector, beta::Number)
 
@@ -101,7 +102,7 @@ end
 
 """
     tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims=50,
-     perplexity=30.0) where T<:Number
+     max_iter::Integer=1000, perplexity=30.0) where T<:Number
 
 Apply t-SNE (t-Distributed Stochastic Neighbor Embedding) to `X`,
 i.e. embed its points into `ndims` dimensions preserving cllose neighbours.
@@ -109,13 +110,26 @@ i.e. embed its points into `ndims` dimensions preserving cllose neighbours.
 Returns the `point×ndims` matrix of calculated embedded coordinates.
 
 Different from original implementation: the default is not to use PCA for initialization.
+
+### Arguments
+	* `no_dims` determines the number og dimensions in the final t-SNE embedding
+	* `initial_dims` the number of dimensions of the dataset after apllying
+	PCA to initialize the solution
+	* `max_iter` how many iterations of t-SNE to perform
+	* `perplexity` the number of "effective neighbours" of a datapoint,
+	usually increases with the amount of points in the dataset. Typical
+	values are between 5 and 50, the default is 30
+	* `min_gain`, `eta`, `cheat_scale`, `initial_momentum`, `final_momentum`,
+	`stop_cheat_iter`, `momentum_switch_iter` low level parameters of t-SNE optimization
+
 """
 #TODO: Add the tsne variables to the function signature and make them be
 #keyword arguments.
 function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims::Integer = 50,
-     perplexity::Number = 30.0; max_iter::Integer = 1000,
-     initial_momentum::Number = 0.5, final_momentum = 0.8, eta::Integer = 500,
-     min_gain::Number = 0.01, cheat_scale::Number = 4.0) where T<:Number
+     max_iter::Integer = 1000, perplexity::Number = 30.0;
+	 initial_momentum::Number = 0.5, final_momentum = 0.8, eta::Integer = 500,
+     min_gain::Number = 0.01, cheat_scale::Number = 4.0,
+	 stop_cheat_iter::Integer = 100, momentum_switch_iter::Integer = 20) where T<:Number
 
     X = pca(X, initial_dims)
     n, d = size(X)
@@ -169,7 +183,7 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims::Integer = 50,
             sum!(dYi, gradient)
         end
         # Perform the update
-        momentum = ifelse(iter < 20, initial_momentum, final_momentum)
+        momentum = ifelse(iter < momentum_switch_iter, initial_momentum, final_momentum)
         for i in eachindex(gains)
             gains[i] = max(ifelse(((dY[i] > 0.) == (iY[i] > 0.)),
                                 gains[i] * 0.8,
@@ -188,7 +202,7 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims::Integer = 50,
         end
 
         # Stop lying about P-values
-        if iter == 100
+        if iter == stop_cheat_iter
             P ./= 4.0
         end
     end
