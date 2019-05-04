@@ -175,7 +175,7 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims::Integer = 50,
         # @. L = (P - Q) * num
         # TODO: Try to use this version to calculate the gradient
         # dY .= 4 .* (Diagonal(vec(sum(L, dims=1))) .- L) * Y
-        @views for i in 1:n
+        @inbounds @views for i in 1:n
             Li = L[:, i]
             dYi = dY[i, :]'
             Yi = Y[i, :]'
@@ -184,7 +184,7 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims::Integer = 50,
         end
         # Perform the update
         momentum = ifelse(iter < momentum_switch_iter, initial_momentum, final_momentum)
-        for i in eachindex(gains)
+        @inbounds  i in eachindex(gains)
             gains[i] = max(ifelse(((dY[i] > 0.) == (iY[i] > 0.)),
                                 gains[i] * 0.8,
                                 gains[i] + 0.2),
