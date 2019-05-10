@@ -123,15 +123,15 @@ Different from original implementation: the default is not to use PCA for initia
 	`stop_cheat_iter`, `momentum_switch_iter` low level parameters of t-SNE optimization
 
 """
-#TODO: Add the tsne variables to the function signature and make them be
-#keyword arguments.
 function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims::Integer = 50,
      max_iter::Integer = 1000, perplexity::Number = 30.0;
 	 initial_momentum::Number = 0.5, final_momentum = 0.8, eta::Integer = 500,
      min_gain::Number = 0.01, cheat_scale::Number = 4.0,
 	 stop_cheat_iter::Integer = 100, momentum_switch_iter::Integer = 20) where T<:Number
 
-    X = pca(X, initial_dims)
+	if size(X, 2) > 50
+		X = pca(X, initial_dims)
+	end
     n, d = size(X)
     Y = randn(n, no_dims)
     dY = fill(zero(T), n, no_dims)              # gradient vector
@@ -141,7 +141,7 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims::Integer = 50,
 
     # Compute P-values
     P = x2p(X, 1e-5, perplexity)
-    P .+= P'
+    P .+= P'									# symmetrization
     P .*= cheat_scale/sum(P)					# early exaggeration + normalization
     P .= max.(P, 1e-12)
     L = similar(P)
@@ -184,7 +184,7 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims::Integer = 50,
         end
         # Perform the update
         momentum = ifelse(iter < momentum_switch_iter, initial_momentum, final_momentum)
-        @inbounds  i in eachindex(gains)
+        @inbounds for i in eachindex(gains)
             gains[i] = max(ifelse(((dY[i] > 0.) == (iY[i] > 0.)),
                                 gains[i] * 0.8,
                                 gains[i] + 0.2),
