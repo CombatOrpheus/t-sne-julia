@@ -12,7 +12,7 @@ export tsne
 Compute the point perplexities `P` given its squared distances to the other points `D`
 ans the precsion of Gaussian distribution `beta`.
 """
-@inline function Hbeta!(P::AbstractVector, D::AbstractVector, beta::Number)
+function Hbeta!(P::AbstractVector, D::AbstractVector, beta::Number)
     @inbounds P .= exp.(-D .* beta)
     sumP = sum(P)
     H = log(sumP) + beta * dot(D, P) / sumP
@@ -31,7 +31,7 @@ function x2p(X::AbstractMatrix{T}, tol::Number =1e-5,
      perplexity::Number =30.0; max_iter::Integer = 50) where T<: Number
     # Initializing some variables
     n, d = size(X)
-    sum_X = sum(X .^ 2, dims=2)
+    sum_X = sum(x -> x^2, X, dims=2)
     D = sum_X .+ (sum_X .+ (-2.0 .* (X * X')))'
     P = fill(zero(T), n, n)
     beta = fill(one(T), n)
@@ -82,7 +82,7 @@ function x2p(X::AbstractMatrix{T}, tol::Number =1e-5,
         beta[i] = betai
     end
     # Return final P matrix
-    @printf("Mean value of sigma: %f\n", mean(sqrt.(1.0 ./ beta)))
+    @printf("Mean σ: %f\n", mean(sqrt.(1.0 ./ beta)))
     return P
 end
 
@@ -91,7 +91,7 @@ end
 
 Run PCA on `X` to reduce the number of its dimensions to `ndims`.
 """
-@inline function pca(X::AbstractMatrix, ndims::Integer = 50)
+function pca(X::AbstractMatrix, ndims::Integer = 50)
     (n, d) = size(X)
     (d <= ndims) && return X
     Y = X .- mean(X, dims=1)
@@ -129,17 +129,13 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims::Integer = 50,
      min_gain::Number = 0.01, cheat_scale::Number = 4.0,
 	 stop_cheat_iter::Integer = 100, momentum_switch_iter::Integer = 20) where T<:Number
 
-	if size(X, 2) > 50
-		X = pca(X, initial_dims)
-	end
+	X = pca(X, initial_dims)
     n, d = size(X)
     Y = randn(n, no_dims)
     dY = fill(zero(T), n, no_dims)              # gradient vector
     iY = fill(zero(T), n, no_dims)              # momentum vector
     gains = fill(one(T), n, no_dims)            # how much momentum is affected by gradient
-    sum_Y = fill(zero(T), n)
-
-    # Compute P-values
+    sum_Y = fill(zero(T), n)				    # Compute P-values
     P = x2p(X, 1e-5, perplexity)
     P .+= P'									# symmetrization
     P .*= cheat_scale/sum(P)					# early exaggeration + normalization
@@ -148,33 +144,29 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims::Integer = 50,
     Y_mean = fill(zero(T), 1, no_dims)
 
     # Pre-allocating some matrixes
-    num = fill(one(T), n, n)
-    inter_num = similar(num)
-    Q = fill!(similar(num), zero(T))
-    gradient = fill(one(T), n, no_dims)
-	error = fill!(similar(P), one(T))
+    num = similar(P)
+    Q = similar(P)
+    gradient = similar(P)
+	error = similar(P)
 
     # Run iterations
     for iter in 1:max_iter
 
         # Compute pairwise affinities
         sum!(x -> x^2, sum_Y, Y)
-		BLAS.gemm!('N', 'T', -2.0, Y, Y, 0.0, inter_num)
-		@. @fastmath num = 1.0 /(1.0 + sum_Y + sum_Y' + inter_num)
+		BLAS.gemm!('N', 'T', -2.0, Y, Y, 0.0, num)
+		@. @fastmath num = 1.0 /(1.0 + sum_Y + sum_Y' + num)
         @inbounds for i in 1:n
             num[i,i] = 0.0
         end
 
-        inv_sum_Q = 1/sum(num)
+        inv_sum_Q = 1.0/sum(num)
 		@inbounds for i in eachindex(Q)
 			Q[i] = Qi = max(num[i]*inv_sum_Q, 1e-12)
 			L[i] = (P[i] - Qi) * num[i]
 		end
 
         # Compute gradient
-        # @. L = (P - Q) * num
-        # TODO: Try to use this version to calculate the gradient
-        # dY .= 4 .* (Diagonal(vec(sum(L, dims=1))) .- L) * Y
         @inbounds @views for i in 1:n
             Li = L[:, i]
             dYi = dY[i, :]'
