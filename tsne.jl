@@ -146,7 +146,7 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims::Integer = 50,
     # Pre-allocating some matrixes
     num = similar(P)
     Q = similar(P)
-    gradient = similar(P)
+    gradient = similar(Y)
 	error = similar(P)
 
     # Run iterations
@@ -174,6 +174,7 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims::Integer = 50,
             @. gradient = Li * (Yi - Y)
             sum!(dYi, gradient)
         end
+
         # Perform the update
         momentum = ifelse(iter < momentum_switch_iter, initial_momentum, final_momentum)
         @inbounds for i in eachindex(gains)
