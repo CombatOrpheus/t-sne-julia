@@ -1,8 +1,8 @@
 module TSNE
 
-using LinearAlgebra
+using LinearAlgebra, ProgressBars
 using Statistics: mean, mean!
-using Printf: @printf
+using Printf: @printf, @sprintf
 
 export tsne
 
@@ -27,8 +27,9 @@ Convert `n×n` squared distances matrix `D` into `n×n` perplexities matrix `P`.
 Performs a binary seach to get P-values in such a way that each conditional
 Gaussian has the same perplexity.
 """
-function x2p(X::AbstractMatrix{T}, tol::Number =1e-5,
-     perplexity::Number =30.0; max_iter::Integer = 50) where T<: Number
+function x2p(X::AbstractMatrix{T}, tol::Number = 1e-5,
+     perplexity::Number = 30.0; max_iter::Integer = 50,
+	 progress = true) where T<: Number
     # Initializing some variables
     n, d = size(X)
     sum_X = sum(x -> x^2, X, dims=2)
@@ -39,12 +40,14 @@ function x2p(X::AbstractMatrix{T}, tol::Number =1e-5,
     Di = fill(zero(T), n)
     thisP = similar(Di)
 
-    # Loop over all datapointa
-    for i in 1:n
-
-        if i % 500 == 0
-            @printf("Computing P-values for point %d of %d...\n", i, n)
-        end
+    # Loop over all datapoints
+	if progress
+		pb = ProgressBar(1:n)
+		set_description(pb, "Computing P-values...")
+	else
+		pb = 1:n
+	end
+    for i in pb
 
         # Compute the Gaussian kernel and entropy for the current precision
         betamin = 0.0
@@ -126,7 +129,7 @@ Different from original implementation: the default is not to use PCA for initia
 function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims::Integer = 50,
      max_iter::Integer = 1000, perplexity::Number = 30.0;
 	 initial_momentum::Number = 0.5, final_momentum = 0.8, eta::Integer = 500,
-     min_gain::Number = 0.01, cheat_scale::Number = 4.0,
+	 min_gain::Number = 0.01, cheat_scale::Number = 4.0, progress = true,
 	 stop_cheat_iter::Integer = 100, momentum_switch_iter::Integer = 20) where T<:Number
 
 	X = pca(X, initial_dims)
@@ -135,7 +138,7 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims::Integer = 50,
     dY = fill(zero(T), n, no_dims)              # gradient vector
     iY = fill(zero(T), n, no_dims)              # momentum vector
     gains = fill(one(T), n, no_dims)            # how much momentum is affected by gradient
-    sum_Y = fill(zero(T), n)				    # Compute P-values
+    sum_Y = fill(zero(T), n)
     P = x2p(X, 1e-5, perplexity)
     P .+= P'									# symmetrization
     P .*= cheat_scale/sum(P)					# early exaggeration + normalization
@@ -148,9 +151,11 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims::Integer = 50,
     Q = similar(P)
     gradient = similar(Y)
 	error = similar(P)
+	last_error = NaN
 
     # Run iterations
-    for iter in 1:max_iter
+	pb = progress ? ProgressBar(1:max_iter) : 1:max_iter
+    for iter in pb
 
         # Compute pairwise affinities
         sum!(x -> x^2, sum_Y, Y)
@@ -188,18 +193,18 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims::Integer = 50,
         @inbounds Y .-= mean!(Y_mean, Y)
 
         # Compute current value of cost function
-        if iter % 100 == 0
-            # C = sum(P .* log.(P ./ Q))
-            @inbounds @. error = P * log(P / Q)
-            @printf("Iteration %d: error is %f\n", iter, sum(error))
+        if iter % 50 == 0
+            @. error = P * log(P / Q)
+			last_error = sum(error)
         end
-
+		if progress
+			set_description(pb, string(@sprintf("Error: %.4f", last_error)))
+		end
         # Stop lying about P-values
         if iter == stop_cheat_iter
             P ./= 4.0
         end
     end
-
     # Return solution
     return Y
 end
