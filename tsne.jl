@@ -33,7 +33,7 @@ function x2p(X::AbstractMatrix{T}, tol::Number = 1e-5,
     # Initializing some variables
     n, d = size(X)
     sum_X = sum(x -> x^2, X, dims=2)
-    D = sum_X .+ (sum_X .+ (-2.0 .* (X * X')))'
+    D = sum_X .+ sum_X' .+ (-2.0 .* (X * X'))
     P = fill(zero(T), n, n)
     beta = fill(one(T), n)
     logU = log(perplexity)
@@ -124,7 +124,6 @@ Different from original implementation: the default is not to use PCA for initia
 	values are between 5 and 50, the default is 30
 	* `min_gain`, `eta`, `cheat_scale`, `initial_momentum`, `final_momentum`,
 	`stop_cheat_iter`, `momentum_switch_iter` low level parameters of t-SNE optimization
-
 """
 function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims::Integer = 50,
      max_iter::Integer = 1000, perplexity::Number = 30.0;
@@ -160,7 +159,7 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims::Integer = 50,
         # Compute pairwise affinities
         sum!(x -> x^2, sum_Y, Y)
 		BLAS.gemm!('N', 'T', -2.0, Y, Y, 0.0, num)
-		@. @fastmath num = 1.0 /(1.0 + sum_Y + sum_Y' + num)
+		@fastmath num .= 1.0 ./(1.0 .+ sum_Y .+ sum_Y' .+ num)
         @inbounds for i in 1:n
             num[i,i] = 0.0
         end
@@ -197,9 +196,9 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims::Integer = 50,
             @. error = P * log(P / Q)
 			last_error = sum(error)
         end
-		if progress
-			set_description(pb, string(@sprintf("Error: %.4f", last_error)))
-		end
+
+		progress && set_description(pb, string(@sprintf("Error: %.4f", last_error)))
+		
         # Stop lying about P-values
         if iter == stop_cheat_iter
             P ./= 4.0
