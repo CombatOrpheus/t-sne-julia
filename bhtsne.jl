@@ -50,12 +50,16 @@ function parse_commandline()
 end
 =#
 
-# Starting here, most functions are in Python
+# Python ints defaults to Int32, while floats default to Float64
 
-function bh_tsne(samples, no_dims=2, initial_dims=50,
-                      perplexity=50, theta=0.5, randseed=-1, verbose=true)
+convertInt32(x) = convert(Int32, x)
 
-    # if use_pca
+function bh_tsne(samples, no_dims::Int = 2, initial_dims::Int = 50,
+                      perplexity::Float64 = 50.0, theta::Float64 = 0.5,
+                      randseed::Int = -1, max_iter::Int = 1000;
+                      verbose = true, use_pca = true)
+
+    if use_pca
         samples .-= mean(samples, dims=1)
         cov_x = samples' * samples
         eig_val, eig_vec = eigen(cov_x)
@@ -65,7 +69,7 @@ function bh_tsne(samples, no_dims=2, initial_dims=50,
 
         if initial_dims > length(eig_vec)
         initial_dims = length(eig_vec)
-        # end
+        end
 
         # truncate the eigen-vectors matrix to keep the most vectors
         # eig_vec = real.(eig_vec[:, :initial_dims])
@@ -79,11 +83,10 @@ function bh_tsne(samples, no_dims=2, initial_dims=50,
     mktempdir() do temp_dir
 
         open(joinpath(temp_dir, "data.dat"), "w") do data_file
-        #Python
-            parameters = [sample_count,sample_dim, theta, perplexity,no_dims]
+            parameters = [convertInt32(sample_count), convertInt32(sample_dim),
+             theta, perplexity, convertInt32(no_dims), convertInt32(max_iter)]
             map(x -> write(data_file, x), parameters)
             nrow, ncol = size(samples)
-            fmt = repeat("d", ncol)
             for i in 1:nrow
                 write(data_file, samples[i, :])
             end
@@ -97,7 +100,7 @@ function bh_tsne(samples, no_dims=2, initial_dims=50,
                 try
                     run(pipeline(`$BH_TSNE_BIN_PATH`, stdout=STDERR))
                 catch excp
-                # warn(excp)
+                println(excp)
                 error("ERROR: Call to bh_tsne exited with non-zero code exit status,
                       please refer to the bh_tsne output for further detail.")
                 end
@@ -105,7 +108,7 @@ function bh_tsne(samples, no_dims=2, initial_dims=50,
                 try
                     run(pipeline(`$BH_TSNE_path`, stdout=DevNull))
                 catch excp
-                    # warn(excp)
+                    println(excp)
                     error("ERROR: Call to bh_tsne exited with a non-zero return code exit status,
                           please enable verbose mode and refer to the bh_tsne output for further details")
                 end
