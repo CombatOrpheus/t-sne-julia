@@ -33,7 +33,9 @@ function x2p(X::AbstractMatrix{T}, tol::Number = 1e-5,
     # Initializing some variables
     n, d = size(X)
     sum_X = sum(x -> x^2, X, dims=2)
-    D = sum_X .+ sum_X' .+ (-2.0 .* (X * X'))
+	D = randn(n, n)
+	BLAS.gemm!('N', 'T', -2.0, X, X, 0.0, D)
+    D .+= sum_X .+ sum_X'
     P = fill(zero(T), n, n)
     beta = fill(one(T), n)
     logU = log(perplexity)
@@ -134,51 +136,53 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims::Integer = 50,
 	X = pca(X, initial_dims)
     n, d = size(X)
     Y = randn(n, no_dims)
-    dY = fill(zero(T), n, no_dims)              # gradient vector
-    iY = fill(zero(T), n, no_dims)              # momentum vector
-    gains = fill(one(T), n, no_dims)            # how much momentum is affected by gradient
-    sum_Y = fill(zero(T), n)
+    dY = fill(zero(T), n, no_dims)    # gradient vector
+    iY = fill(zero(T), n, no_dims)    # momentum vector
+    gains = fill(one(T), n, no_dims)  # how much momentum is affected by gradient
     P = x2p(X, 1e-5, perplexity)
-    P .+= P'									# symmetrization
-    P .*= cheat_scale/sum(P)					# early exaggeration + normalization
+    P .+= P'						  # symmetrization
+    P .*= cheat_scale/sum(P)		  # early exaggeration + normalization
     P .= max.(P, 1e-12)
-    L = similar(P)
-    Y_mean = fill(zero(T), 1, no_dims)
 
     # Pre-allocating some matrixes
-    num = similar(P)
-    Q = similar(P)
-    gradient = similar(Y)
+	L = similar(P)					  # temp matrix for Student-t and gradient steps
+    Q = similar(P)					  # temp matrix with low dimensional probabilities
+	sum_Y = fill(zero(T), n)
+	Y_mean = fill(zero(T), 1, no_dims)
 	error = similar(P)
 	last_error = NaN
 
     # Run iterations
 	pb = progress ? ProgressBar(1:max_iter) : 1:max_iter
     for iter in pb
-
         # Compute pairwise affinities
         sum!(x -> x^2, sum_Y, Y)
-		BLAS.gemm!('N', 'T', -2.0, Y, Y, 0.0, num)
-		@fastmath num .= 1.0 ./(1.0 .+ sum_Y .+ sum_Y' .+ num)
-        @inbounds for i in 1:n
-            num[i,i] = 0.0
-        end
-
-        inv_sum_Q = 1.0/sum(num)
-		@inbounds for i in eachindex(Q)
-			Q[i] = Qi = max(num[i]*inv_sum_Q, 1e-12)
-			L[i] = (P[i] - Qi) * num[i]
+		# L = 2YY'
+		BLAS.gemm!('N', 'T', -2.0, Y, Y, 0.0, L)
+		# Student-t Distribution
+		L .= 1.0 ./(1.0 .+ sum_Y .+ sum_Y' .+ L)
+		fill!(sum_Y, 0.0)
+        inv_sum_Q = 1.0/sum(L)
+		@inbounds for j = 1:size(Q, 2)
+			Pj = view(P, :, j)
+			Qj = view(Q, :, j)
+			Lj = view(L, :, j)
+			# Diagonal should be zero
+			Lj[j] = 0.0
+			@inbounds for i = 1:size(Lj, 1)
+				Qj[i] = max(Lj[i] * inv_sum_Q, 1e-12)
+				# Reusing L for gradient step
+				@fastmath Lj[i] *= (Pj[i] - Qj[i])
+			end
+			# Reusing sum_Y for column sums
+			sum_Y .+= Lj
 		end
-
-        # Compute gradient
-        @inbounds @views for i in 1:n
-            Li = L[:, i]
-            dYi = dY[i, :]'
-            Yi = Y[i, :]'
-            @. gradient = Li * (Yi - Y)
-            sum!(dYi, gradient)
-        end
-
+		# Compute gradient
+		@inbounds for (i , ldiag) in enumerate(sum_Y)
+			L[i, i] -= ldiag
+		end
+		# dY = -4LY
+		BLAS.gemm!('N', 'N', -4.0, L, Y, 0.0, dY)
         # Perform the update
         momentum = ifelse(iter < momentum_switch_iter, initial_momentum, final_momentum)
         @inbounds for i in eachindex(gains)
@@ -198,7 +202,7 @@ function tsne(X::AbstractMatrix{T}, no_dims=2, initial_dims::Integer = 50,
         end
 
 		progress && set_description(pb, string(@sprintf("Error: %.4f", last_error)))
-		
+
         # Stop lying about P-values
         if iter == stop_cheat_iter
             P ./= 4.0
