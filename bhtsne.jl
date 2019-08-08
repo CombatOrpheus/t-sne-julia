@@ -2,7 +2,7 @@ module BHTsne
 
 using ArgParse
 using Statistics: mean
-using LinearAlgebra: eigen
+using LinearAlgebra: eigen, Symmetric
 
 # Constants
 BH_TSNE_BIN_PATH = ifelse(Sys.iswindows(),
@@ -13,7 +13,7 @@ if !isfile(BH_TSNE_BIN_PATH)
     println("Unable to find the bh_tsne binary in the same
     directory as this script, trying to compile...")
     cd(dirname(BH_TSNE_BIN_PATH)) do
-        run(`g++ sptree.cpp tsne.cpp tsne_main.cpp -o bh_tsne -O2`)
+        run(`g++ sptree.cpp tsne.cpp tsne_main.cpp -o bh_tsne -O3`)
     end
 end
 
@@ -52,7 +52,16 @@ end
 
 # Python ints defaults to Int32, while floats default to Float64
 
-convertInt32(x) = convert(Int32, x)
+cI32(x) = convert(Int32, x)
+
+function pca(X::AbstractMatrix, ndims::Integer = 50)
+    (n, d) = size(X)
+    (d <= ndims) && return X
+    Y = X .- mean(X, dims=1)
+    C = Symmetric((Y' * Y) ./ (n-1))
+    Ceig = eigen(C, (d-ndims+1):d) # take eigvects for top ndims largest eigvals
+    return Y * reverse(Ceig.vectors, dims=2)
+end
 
 function bh_tsne(samples, no_dims::Int = 2, initial_dims::Int = 50,
                       perplexity::Float64 = 50.0, theta::Float64 = 0.5,
@@ -60,22 +69,8 @@ function bh_tsne(samples, no_dims::Int = 2, initial_dims::Int = 50,
                       verbose = true, use_pca = true)
 
     if use_pca
-        samples .-= mean(samples, dims=1)
-        cov_x = samples' * samples
-        eig_val, eig_vec = eigen(cov_x)
-
-        # Sort the eigen-values in the descending order
-        eig_vec = eig_vec[:, sortperm(eig_val, rev=true)]
-
-        if initial_dims > length(eig_vec)
-        initial_dims = length(eig_vec)
-        end
-
-        # truncate the eigen-vectors matrix to keep the most vectors
-        # eig_vec = real.(eig_vec[:, :initial_dims])
-        samples = samples * eig_vec
+        samples = pca(samples, initial_dims)
     end
-
     # Assume that the dimensionality of the first sample is representative for
     # the whole batch
     sample_count, sample_dim = size(samples)
@@ -83,22 +78,22 @@ function bh_tsne(samples, no_dims::Int = 2, initial_dims::Int = 50,
     mktempdir() do temp_dir
 
         open(joinpath(temp_dir, "data.dat"), "w") do data_file
-            parameters = [convertInt32(sample_count), convertInt32(sample_dim),
-             theta, perplexity, convertInt32(no_dims), convertInt32(max_iter)]
-            map(x -> write(data_file, x), parameters)
-            nrow, ncol = size(samples)
-            for i in 1:nrow
-                write(data_file, samples[i, :])
+            write(data_file, cI32(sample_count), cI32(sample_dim), theta,
+            perplexity, cI32(no_dims), cI32(max_iter))
+            for i in eachrow(samples')
+                write(data_file, i)
             end
             if randseed != -1
-                write(data_file, randseed)
+                write(data_file, cI32(randseed))
             end
         end
 
         cd(temp_dir) do
             if verbose
                 try
-                    run(pipeline(`$BH_TSNE_BIN_PATH`, stdout=STDERR))
+                    run(pipeline(`$BH_TSNE_BIN_PATH`,
+                    stdout="out.txt",
+                    stderr="errs.txt"))
                 catch excp
                 println(excp)
                 error("ERROR: Call to bh_tsne exited with non-zero code exit status,
@@ -116,8 +111,8 @@ function bh_tsne(samples, no_dims::Int = 2, initial_dims::Int = 50,
         end
 
         open(joinpath(temp_dir, "result.dat"), "r") do output_file
-            result_samples = read(output_file, Int)
-            result_dims = read(output_file, Int)
+            result_samples = read(output_file, Int32)
+            result_dims = read(output_file, Int32)
             results = [(read(output_file, Int), read(output_file, Int)) for _ in 1:result_samples]
             results = [(read(output_file, Int), e) for e in results]
             sort!(results)
