@@ -33,10 +33,10 @@
 
 /* This code was adopted with minor modifications from Steve Hanov's great tutorial at http://stevehanov.ca/blog/index.php?id=130 */
 
-#include <stdlib.h>
+#include <cstdlib>
 #include <algorithm>
 #include <vector>
-#include <stdio.h>
+#include <cstdio>
 #include <queue>
 #include <limits>
 #include <cmath>
@@ -55,9 +55,9 @@ public:
     DataPoint() {
         _D = 1;
         _ind = -1;
-        _x = NULL;
+        _x = nullptr;
     }
-    DataPoint(int D, int ind, double* x) {
+    DataPoint(int D, int ind, const double* x) {
         _D = D;
         _ind = ind;
         _x = (double*) malloc(_D * sizeof(double));
@@ -71,10 +71,10 @@ public:
             for(int d = 0; d < _D; d++) _x[d] = other.x(d);
         }
     }
-    ~DataPoint() { if(_x != NULL) free(_x); }
+    ~DataPoint() { if(_x != nullptr) free(_x); }
     DataPoint& operator= (const DataPoint& other) {         // asignment should free old object
         if(this != &other) {
-            if(_x != NULL) free(_x);
+            if(_x != nullptr) free(_x);
             _D = other.dimensionality();
             _ind = other.index();
             _x = (double*) malloc(_D * sizeof(double));

@@ -30,10 +30,10 @@
  *
  */
 
-#include <math.h>
-#include <float.h>
-#include <stdlib.h>
-#include <stdio.h>
+#include <cmath>
+#include <cfloat>
+#include <cstdlib>
+#include <cstdio>
 #include <cmath>
 #include "sptree.h"
 
@@ -77,7 +77,7 @@ void Cell::setWidth(unsigned int d, double val) {
 }
 
 // Checks whether a point lies in a cell
-bool Cell::containsPoint(double point[])
+bool Cell::containsPoint(const double point[])
 {
     for(int d = 0; d < dimension; d++) {
         if(corner[d] - width[d] > point[d]) return false;
@@ -93,9 +93,9 @@ SPTree::SPTree(unsigned int D, double* inp_data, unsigned int N)
     
     // Compute mean, width, and height of current map (boundaries of SPTree)
     int nD = 0;
-    double* mean_Y = (double*) calloc(D,  sizeof(double));
-    double*  min_Y = (double*) malloc(D * sizeof(double)); for(unsigned int d = 0; d < D; d++)  min_Y[d] =  DBL_MAX;
-    double*  max_Y = (double*) malloc(D * sizeof(double)); for(unsigned int d = 0; d < D; d++)  max_Y[d] = -DBL_MAX;
+    auto* mean_Y = (double*) calloc(D,  sizeof(double));
+    auto*  min_Y = (double*) malloc(D * sizeof(double)); for(unsigned int d = 0; d < D; d++)  min_Y[d] =  DBL_MAX;
+    auto*  max_Y = (double*) malloc(D * sizeof(double)); for(unsigned int d = 0; d < D; d++)  max_Y[d] = -DBL_MAX;
     for(unsigned int n = 0; n < N; n++) {
         for(unsigned int d = 0; d < D; d++) {
             mean_Y[d] += inp_data[n * D + d];
@@ -107,9 +107,9 @@ SPTree::SPTree(unsigned int D, double* inp_data, unsigned int N)
     for(int d = 0; d < D; d++) mean_Y[d] /= (double) N;
     
     // Construct SPTree
-    double* width = (double*) malloc(D * sizeof(double));
+    auto* width = (double*) malloc(D * sizeof(double));
     for(int d = 0; d < D; d++) width[d] = fmax(max_Y[d] - mean_Y[d], mean_Y[d] - min_Y[d]) + 1e-5;
-    init(NULL, D, inp_data, mean_Y, width);
+    init(nullptr, D, inp_data, mean_Y, width);
     fill(N);
     
     // Clean up memory
@@ -123,7 +123,7 @@ SPTree::SPTree(unsigned int D, double* inp_data, unsigned int N)
 // Constructor for SPTree with particular size and parent -- build the tree, too!
 SPTree::SPTree(unsigned int D, double* inp_data, unsigned int N, double* inp_corner, double* inp_width)
 {
-    init(NULL, D, inp_data, inp_corner, inp_width);
+    init(nullptr, D, inp_data, inp_corner, inp_width);
     fill(N);
 }
 
@@ -131,7 +131,7 @@ SPTree::SPTree(unsigned int D, double* inp_data, unsigned int N, double* inp_cor
 // Constructor for SPTree with particular size (do not fill the tree)
 SPTree::SPTree(unsigned int D, double* inp_data, double* inp_corner, double* inp_width)
 {
-    init(NULL, D, inp_data, inp_corner, inp_width);
+    init(nullptr, D, inp_data, inp_corner, inp_width);
 }
 
 
@@ -166,7 +166,7 @@ void SPTree::init(SPTree* inp_parent, unsigned int D, double* inp_data, double* 
     for(unsigned int d = 0; d < D; d++) boundary->setWidth( d, inp_width[d]);
     
     children = (SPTree**) malloc(no_children * sizeof(SPTree*));
-    for(unsigned int i = 0; i < no_children; i++) children[i] = NULL;
+    for(unsigned int i = 0; i < no_children; i++) children[i] = nullptr;
 
     center_of_mass = (double*) malloc(D * sizeof(double));
     for(unsigned int d = 0; d < D; d++) center_of_mass[d] = .0;
@@ -179,7 +179,7 @@ void SPTree::init(SPTree* inp_parent, unsigned int D, double* inp_data, double* 
 SPTree::~SPTree()
 {
     for(unsigned int i = 0; i < no_children; i++) {
-        if(children[i] != NULL) delete children[i];
+        if(children[i] != nullptr) delete children[i];
     }
     free(children);
     free(center_of_mass);
@@ -252,8 +252,8 @@ bool SPTree::insert(unsigned int new_index)
 void SPTree::subdivide() {
     
     // Create new children
-    double* new_corner = (double*) malloc(dimension * sizeof(double));
-    double* new_width  = (double*) malloc(dimension * sizeof(double));
+    auto* new_corner = (double*) malloc(dimension * sizeof(double));
+    auto* new_width  = (double*) malloc(dimension * sizeof(double));
     for(unsigned int i = 0; i < no_children; i++) {
         unsigned int div = 1;
         for(unsigned int d = 0; d < dimension; d++) {
@@ -353,10 +353,9 @@ void SPTree::computeNonEdgeForces(unsigned int point_index, double theta, double
     // Check whether we can use this node as a "summary"
     double max_width = 0.0;
     double cur_width;
-    for(unsigned int d = 0; d < dimension; d++) {
-        cur_width = boundary->getWidth(d);
-        max_width = (max_width > cur_width) ? max_width : cur_width;
-    }
+    for(unsigned int d = 0; d < dimension; d++) cur_width = boundary->getWidth(d);
+    for(unsigned int d = 0; d < dimension; d++)max_width = (max_width > cur_width) ? max_width : cur_width;
+
     if(is_leaf || max_width / sqrt(D) < theta) {
     
         // Compute and add t-SNE force between point and current node
@@ -375,7 +374,7 @@ void SPTree::computeNonEdgeForces(unsigned int point_index, double theta, double
 
 
 // Computes edge forces
-void SPTree::computeEdgeForces(unsigned int* row_P, unsigned int* col_P, double* val_P, int N, double* pos_f)
+void SPTree::computeEdgeForces(const unsigned int* row_P, const unsigned int* col_P, const double* val_P, int N, double* pos_f)
 {
     
     // Loop over all edges in the graph
